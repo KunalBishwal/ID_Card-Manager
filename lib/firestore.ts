@@ -1,7 +1,9 @@
-import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+// lib/firestore.ts
+import { initializeApp, getApps, getApp } from "firebase/app"
+import { getFirestore } from "firebase/firestore"
+import { getAuth, GoogleAuthProvider } from "firebase/auth"
 
-// These come from your .env.local
+// Firebase config loaded from .env.local
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN!,
@@ -10,7 +12,14 @@ const firebaseConfig = {
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID!,
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID!,
-};
+}
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+// Prevent double-initialization
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp()
+
+// Firestore instance
+export const db = getFirestore(app)
+
+// Auth instance + Google provider
+export const auth = getAuth(app)
+export const googleProvider = new GoogleAuthProvider()

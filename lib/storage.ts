@@ -1,7 +1,11 @@
 // lib/storage.ts
 import { db } from "./firestore"
+import { getAuth } from "firebase/auth"
 import {
   collection,
+  query,
+  where,
+  orderBy,
   addDoc,
   getDocs,
   doc,
@@ -14,34 +18,49 @@ import type { StudentID, StudentIDFormData } from "./types"
 
 const COL = "student_ids"
 
+// helper to convert Firestore Timestamps or numbers → ms
 function toMs(v: any): number {
-  if (v && typeof v.toMillis === "function") return v.toMillis()
+  if (v?.toMillis) return v.toMillis()
   if (typeof v === "number") return v
   if (v instanceof Date) return v.getTime()
   return Date.now()
 }
 
-// Create
+/** Create a new ID card tied to the currently‐signed‐in user */
 export async function addStudentID(data: StudentIDFormData): Promise<string> {
-  const { id: _i, createdAt: _c, updatedAt: _u, ...rest } = data as any
+  const auth = getAuth()
+  const uid = auth.currentUser?.uid
+  if (!uid) throw new Error("Not authenticated")
   const ref = await addDoc(collection(db, COL), {
-    ...rest,
+    ...data,
+    uid,
     createdAt: Timestamp.now(),
     updatedAt: Timestamp.now(),
   })
   return ref.id
 }
 
-// Read all
+/** Get *only* this user’s cards, newest first */
 export async function getStudentIDs(): Promise<StudentID[]> {
-  const snap = await getDocs(collection(db, COL))
-  return snap.docs.map((d) => {
+  const auth = getAuth()
+  const uid = auth.currentUser?.uid
+  if (!uid) return []
+
+  const q = query(
+    collection(db, COL),
+    where("uid", "==", uid),
+    orderBy("createdAt", "desc")
+  )
+  const snap = await getDocs(q)
+  return snap.docs.map(d => {
     const raw = d.data() as any
     const createdAt = toMs(raw.createdAt)
     const updatedAt = toMs(raw.updatedAt)
-    const { createdAt: _c, updatedAt: _u, id: _i, ...rest } = raw
+    // strip off Firestore‐only fields
+    const { uid: _u, createdAt: _c, updatedAt: _u2, ...rest } = raw
     return {
       id: d.id,
+      uid,
       ...rest,
       createdAt,
       updatedAt,
@@ -49,33 +68,48 @@ export async function getStudentIDs(): Promise<StudentID[]> {
   })
 }
 
-// Read one
 export async function getStudentIDById(id: string): Promise<StudentID | null> {
-  const dref = doc(db, COL, id)
-  const snap = await getDoc(dref)
-  if (!snap.exists()) return null
+  const auth = getAuth()
+  const uid = auth.currentUser?.uid
+  if (!uid) return null
 
+  const snap = await getDoc(doc(db, COL, id))
+  if (!snap.exists()) return null
   const raw = snap.data() as any
+  if (raw.uid !== uid) return null   // prevent reading others’ docs
+
   const createdAt = toMs(raw.createdAt)
   const updatedAt = toMs(raw.updatedAt)
-  const { createdAt: _c, updatedAt: _u, id: _i, ...rest } = raw
+  const { uid: _u, createdAt: _c, updatedAt: _u2, ...rest } = raw
 
   return {
     id: snap.id,
+    uid,
     ...rest,
     createdAt,
     updatedAt,
   } as StudentID
 }
 
-// Update
 export async function updateStudentID(s: StudentID): Promise<void> {
-  const { id, createdAt: _c, updatedAt: _u, ...rest } = s
-  const dref = doc(db, COL, id)
-  await updateDoc(dref, { ...rest, updatedAt: Timestamp.now() })
+  const auth = getAuth()
+  const uid = auth.currentUser?.uid
+  if (!uid || s.uid !== uid) throw new Error("Not authorized")
+  const { id, uid: _u, createdAt: _c, updatedAt: _u2, ...rest } = s
+  await updateDoc(doc(db, COL, id), {
+    ...rest,
+    updatedAt: Timestamp.now(),
+  })
 }
 
-// Delete
 export async function deleteStudentID(id: string): Promise<void> {
-  await deleteDoc(doc(db, COL, id))
+  const auth = getAuth()
+  const uid = auth.currentUser?.uid
+  if (!uid) throw new Error("Not authenticated")
+  const dref = doc(db, COL, id)
+  const snap = await getDoc(dref)
+  if (!snap.exists() || (snap.data() as any).uid !== uid) {
+    throw new Error("Not authorized")
+  }
+  await deleteDoc(dref)
 }
